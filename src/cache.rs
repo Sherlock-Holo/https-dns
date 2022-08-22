@@ -1,10 +1,11 @@
 extern crate lru;
 
-use lru::LruCache;
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+
+use lru::LruCache;
 use trust_dns_proto::op::{message::Message, Query};
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -31,7 +32,7 @@ impl Cache {
         }
     }
 
-    pub fn put(&mut self, message: Message) {
+    pub fn put(&self, message: Message) {
         if message.queries().is_empty() {
             return;
         }
@@ -55,7 +56,7 @@ impl Cache {
         };
     }
 
-    pub fn get(&mut self, message: &Message) -> Option<Message> {
+    pub fn get(&self, message: &Message) -> Option<Message> {
         let mut lru_cache = self.lru_cache.lock().unwrap();
         if lru_cache.len() == 0 || message.queries().is_empty() {
             return None;
@@ -94,16 +95,18 @@ impl Default for Cache {
 
 #[cfg(test)]
 mod tests {
-    use super::Cache;
     use std::net::Ipv4Addr;
+
     use trust_dns_proto::{
         op::{message::Message, Query},
         rr::{Name, RData, Record, RecordType},
     };
 
+    use super::Cache;
+
     #[test]
     fn test_cache_hit() {
-        let mut cache = Cache::new();
+        let cache = Cache::new();
         let mut query = Query::new();
         let name: Name = "example.com".parse().unwrap();
         query.set_name(name.clone());
@@ -124,7 +127,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_cache_expire() {
-        let mut cache = Cache::new();
+        let cache = Cache::new();
         let mut query = Query::new();
         let name: Name = "example.com".parse().unwrap();
         query.set_name(name.clone());

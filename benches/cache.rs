@@ -1,18 +1,20 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use https_dns::cache::Cache;
 use std::net::Ipv4Addr;
+
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use tokio::runtime::Builder;
 use trust_dns_proto::{
     op::{Message, Query},
     rr::{Name, RData, Record, RecordType},
 };
 
+use https_dns::cache::Cache;
+
 async fn cache() {
     let cache = &Cache::new();
 
     let mut handle_list = Vec::new();
     for i in 0..10000 {
-        let mut cache = cache.clone();
+        let cache = cache.clone();
         let handle = tokio::spawn(async move {
             let mut query = Query::new();
             let name: Name = format!("{i}.example.com").parse().unwrap();

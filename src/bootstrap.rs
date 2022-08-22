@@ -1,22 +1,24 @@
-use crate::error::UpstreamError::{self, Bootstrap, Build};
-use crate::utils::build_request_message;
+use std::{net::SocketAddr, time::Duration};
+
+use anyhow::{anyhow, Result};
 use http::header::{ACCEPT, CONTENT_TYPE};
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     Client,
 };
-use std::{net::SocketAddr, time::Duration};
 use trust_dns_proto::{
     op::message::Message,
     rr::{Name, RData, RecordType},
 };
+
+use crate::utils::build_request_message;
 
 pub struct BootstrapClient {
     https_client: Client,
 }
 
 impl BootstrapClient {
-    pub fn new() -> Result<Self, UpstreamError> {
+    pub fn new() -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
             CONTENT_TYPE,
@@ -34,78 +36,53 @@ impl BootstrapClient {
             .brotli(true)
             .timeout(Duration::from_secs(10));
 
-        let https_client = match client_builder.build() {
-            Ok(https_client) => https_client,
-            Err(_) => return Err(Build),
-        };
-
-        Ok(BootstrapClient { https_client })
+        Ok(BootstrapClient {
+            https_client: client_builder.build()?,
+        })
     }
 
-    pub async fn bootstrap(&self, host: &str) -> Result<SocketAddr, UpstreamError> {
-        let request_name = match host.parse::<Name>() {
-            Ok(request_name) => request_name,
-            Err(error) => return Err(Bootstrap(host.to_string(), error.to_string())),
-        };
+    pub async fn bootstrap(
+        &self,
+        host: &str,
+        bootstrap_upstream: Option<&str>,
+    ) -> Result<SocketAddr> {
+        let request_name = host.parse::<Name>()?;
         let request_message = build_request_message(request_name, RecordType::A);
 
-        let raw_request_message = match request_message.to_vec() {
-            Ok(raw_request_message) => raw_request_message,
-            Err(error) => return Err(Bootstrap(host.to_string(), error.to_string())),
-        };
+        let raw_request_message = request_message.to_vec()?;
 
-        let url = "https://1.1.1.1/dns-query";
+        let url = bootstrap_upstream.unwrap_or("https://1.0.0.1/dns-query");
         let request = self.https_client.post(url).body(raw_request_message);
-        let response = match request.send().await {
-            Ok(response) => response,
-            Err(error) => return Err(Bootstrap(host.to_string(), error.to_string())),
-        };
+        let response = request.send().await?;
 
-        let raw_response_message = match response.bytes().await {
-            Ok(response_bytes) => response_bytes,
-            Err(error) => return Err(Bootstrap(host.to_string(), error.to_string())),
-        };
+        let raw_response_message = response.bytes().await?;
 
-        let response_message = match Message::from_vec(&raw_response_message) {
-            Ok(response_message) => response_message,
-            Err(error) => return Err(Bootstrap(host.to_string(), error.to_string())),
-        };
+        let response_message = Message::from_vec(&raw_response_message)?;
 
         if response_message.answers().is_empty() {
-            return Err(Bootstrap(
-                host.to_string(),
-                String::from("the response doesn't contain the answer"),
-            ));
+            return Err(anyhow!("the response doesn't contain the answer"));
         }
         let record = &response_message.answers()[0];
-        let record_data = match record.data() {
-            Some(record_data) => record_data,
-            None => {
-                return Err(Bootstrap(
-                    host.to_string(),
-                    String::from("the response doesn't contain the answer"),
-                ))
-            }
-        };
+        let record_data = record
+            .data()
+            .ok_or_else(|| anyhow!("the response doesn't contain the answer"))?;
 
         match record_data {
             RData::A(ipv4_address) => Ok(SocketAddr::new((*ipv4_address).into(), 0)),
             RData::AAAA(ipv6_address) => Ok(SocketAddr::new((*ipv6_address).into(), 0)),
-            _ => Err(Bootstrap(
-                host.to_string(),
-                String::from("unknown record type"),
-            )),
+            _ => Err(anyhow!("unknown record type")),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::BootstrapClient;
     use std::{
         collections::HashMap,
         net::{Ipv4Addr, SocketAddr},
     };
+
+    use super::BootstrapClient;
 
     #[tokio::test]
     async fn test_bootstrap() {
@@ -142,7 +119,7 @@ mod tests {
         ]);
 
         for (host, socket_addr_list) in bootstrap_result_map {
-            let result = bootstrap_client.bootstrap(host).await.unwrap();
+            let result = bootstrap_client.bootstrap(host, None).await.unwrap();
             assert!(socket_addr_list.contains(&result));
         }
     }

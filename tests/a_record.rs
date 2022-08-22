@@ -1,10 +1,14 @@
-use https_dns::utils::{build_request_message, build_test_listener};
 use std::{collections::HashMap, net::Ipv4Addr};
+
 use tokio::{net::UdpSocket, test};
 use trust_dns_proto::{
     op::Message,
     rr::{Name, RData, RecordType},
 };
+
+use https_dns::utils::build_request_message;
+
+include!("util.rs");
 
 #[test]
 async fn a_record() {
